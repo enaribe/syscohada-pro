@@ -1,0 +1,282 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ──────────────────────────────────────────────
+// Tenant = Entreprise abonnée
+// ──────────────────────────────────────────────
+model Tenant {
+  id             String       @id @default(cuid())
+  raisonSociale  String
+  slug           String       @unique
+  formeJuridique String?
+  ninea          String?
+  rccm           String?
+  secteur        String?
+  adresse        String?
+  ville          String?
+  pays           String       @default("SN")
+  zone           Zone         @default(UEMOA)
+  plan           Plan         @default(STARTER)
+  users          User[]
+  exercices      Exercice[]
+  invitations    Invitation[]
+  createdAt      DateTime     @default(now())
+}
+
+// ──────────────────────────────────────────────
+// Exercice = Année comptable (remplace "Dossier")
+// ──────────────────────────────────────────────
+model Exercice {
+  id              String           @id @default(cuid())
+  annee           Int
+  libelle         String?
+  statut          StatutExercice   @default(OUVERT)
+  dateDebut       DateTime
+  dateFin         DateTime
+  tenantId        String
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
+  ecritures       Ecriture[]
+  immobilisations Immobilisation[]
+  previsions      Prevision[]
+  modeles         ModeleRecurrent[]
+  documents       Document[]
+  archiveJson     Json?
+  createdAt       DateTime         @default(now())
+
+  @@unique([tenantId, annee])
+  @@index([tenantId])
+}
+
+// ──────────────────────────────────────────────
+// User = Collaborateur de l'entreprise
+// ──────────────────────────────────────────────
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  nom       String
+  prenom    String?
+  password  String
+  role      Role     @default(COMPTABLE)
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  actif     Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// ──────────────────────────────────────────────
+// Invitation = Invitation collaborateur
+// ──────────────────────────────────────────────
+model Invitation {
+  id        String   @id @default(cuid())
+  email     String
+  role      Role
+  token     String   @unique @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  expiresAt DateTime
+  accepte   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// ──────────────────────────────────────────────
+// Ecriture = Écriture comptable
+// ──────────────────────────────────────────────
+model Ecriture {
+  id         String          @id @default(cuid())
+  date       DateTime
+  journal    Journal
+  libelle    String
+  piece      String?
+  lignes     LigneEcriture[]
+  tenantId   String
+  exerciceId String
+  exercice   Exercice        @relation(fields: [exerciceId], references: [id])
+  source     Source          @default(MANUEL)
+  deletedAt  DateTime?
+  createdAt  DateTime        @default(now())
+
+  @@index([tenantId, exerciceId, date])
+  @@index([tenantId, journal])
+}
+
+// ──────────────────────────────────────────────
+// LigneEcriture = Ligne d'une écriture
+// ──────────────────────────────────────────────
+model LigneEcriture {
+  id         String   @id @default(cuid())
+  ecritureId String
+  ecriture   Ecriture @relation(fields: [ecritureId], references: [id], onDelete: Cascade)
+  compte     String
+  intitule   String
+  debit      Decimal  @db.Decimal(18, 2)
+  credit     Decimal  @db.Decimal(18, 2)
+  tenantId   String
+
+  @@index([tenantId, compte])
+}
+
+// ──────────────────────────────────────────────
+// Immobilisation = Actif immobilisé
+// ──────────────────────────────────────────────
+model Immobilisation {
+  id               String       @id @default(cuid())
+  designation      String
+  compteImmo       String
+  compteAmort      String
+  dateAcquisition  DateTime
+  valeurOrigine    Decimal      @db.Decimal(18, 2)
+  dureeVie         Int
+  methode          MethodeAmort @default(LINEAIRE)
+  dateMiseEnService DateTime?
+  dateCession      DateTime?
+  valeurCession    Decimal?     @db.Decimal(18, 2)
+  tenantId         String
+  exerciceId       String
+  exercice         Exercice     @relation(fields: [exerciceId], references: [id])
+  createdAt        DateTime     @default(now())
+
+  @@index([tenantId, exerciceId])
+}
+
+// ──────────────────────────────────────────────
+// Prevision = Prévision de trésorerie
+// ──────────────────────────────────────────────
+model Prevision {
+  id         String   @id @default(cuid())
+  mois       Int
+  annee      Int
+  categorie  String
+  libelle    String
+  type       TypeFlux
+  montant    Decimal  @db.Decimal(18, 2)
+  tenantId   String
+  exerciceId String
+  exercice   Exercice @relation(fields: [exerciceId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, exerciceId])
+}
+
+// ──────────────────────────────────────────────
+// ModeleRecurrent = Modèle d'écriture récurrente
+// ──────────────────────────────────────────────
+model ModeleRecurrent {
+  id            String               @id @default(cuid())
+  nom           String
+  journal       Journal
+  libelle       String
+  lignesJson    Json
+  periodicite   Periodicite
+  prochaineDate DateTime
+  actif         Boolean              @default(true)
+  tenantId      String
+  exerciceId    String
+  exercice      Exercice             @relation(fields: [exerciceId], references: [id])
+  historiques   HistoriqueRecurrent[]
+  createdAt     DateTime             @default(now())
+
+  @@index([tenantId, exerciceId])
+}
+
+// ──────────────────────────────────────────────
+// HistoriqueRecurrent = Historique de génération
+// ──────────────────────────────────────────────
+model HistoriqueRecurrent {
+  id        String          @id @default(cuid())
+  modeleId  String
+  modele    ModeleRecurrent @relation(fields: [modeleId], references: [id], onDelete: Cascade)
+  dateGen   DateTime        @default(now())
+  tenantId  String
+
+  @@index([tenantId])
+}
+
+// ──────────────────────────────────────────────
+// Document = Pièce justificative (coffre-fort)
+// ──────────────────────────────────────────────
+model Document {
+  id         String   @id @default(cuid())
+  nom        String
+  type       String
+  taille     Int
+  r2Key      String
+  ecritureId String?
+  tenantId   String
+  exerciceId String
+  exercice   Exercice @relation(fields: [exerciceId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, exerciceId])
+}
+
+// ──────────────────────────────────────────────
+// Enums
+// ──────────────────────────────────────────────
+enum Role {
+  ADMIN
+  EXPERT
+  COMPTABLE
+  AUDITEUR
+  DIRIGEANT
+  COMMISSAIRE
+}
+
+enum Plan {
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum Zone {
+  UEMOA
+  CEMAC
+}
+
+enum Journal {
+  ACHAT
+  VENTE
+  BANQUE
+  CAISSE
+  OD
+  AN
+}
+
+enum Source {
+  MANUEL
+  IA
+  IMPORT
+  RECURRENT
+}
+
+enum MethodeAmort {
+  LINEAIRE
+  DEGRESSIF
+}
+
+enum TypeFlux {
+  ENCAISSEMENT
+  DECAISSEMENT
+}
+
+enum StatutExercice {
+  OUVERT
+  CLOTURE
+}
+
+enum Periodicite {
+  MENSUELLE
+  BIMESTRIELLE
+  TRIMESTRIELLE
+  SEMESTRIELLE
+  ANNUELLE
+}
