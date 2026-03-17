@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod/v4'
-import { AI_MAX_TOKENS, AI_MODEL, anthropic } from '@/server/lib/ai/client'
+import { AI_MAX_TOKENS, AI_MODEL, openrouter } from '@/server/lib/ai/client'
 import { parseEcritureIA, parseOcrResult } from '@/server/lib/ai/parsers'
 import { OCR_PROMPT, SYSTEM_PROMPT } from '@/server/lib/ai/prompts'
 import { checkRateLimit } from '@/server/lib/ai/rate-limit'
@@ -68,15 +68,18 @@ export const iaRouter = createTRPCRouter({
       }
 
       try {
-        const response = await anthropic.messages.create({
+        const response = await openrouter.chat.completions.create({
           model: AI_MODEL,
           max_tokens: AI_MAX_TOKENS,
-          system: SYSTEM_PROMPT({
-            raisonSociale: tenant.raisonSociale,
-            zone: tenant.zone as 'UEMOA' | 'CEMAC',
-            exercice: exercice.annee,
-          }),
           messages: [
+            {
+              role: 'system',
+              content: SYSTEM_PROMPT({
+                raisonSociale: tenant.raisonSociale,
+                zone: tenant.zone as 'UEMOA' | 'CEMAC',
+                exercice: exercice.annee,
+              }),
+            },
             {
               role: 'user',
               content: `Génère l'écriture comptable pour : ${input.description}${input.date ? ` en date du ${input.date}` : ''}`,
@@ -84,7 +87,7 @@ export const iaRouter = createTRPCRouter({
           ],
         })
 
-        const text = response.content[0]?.type === 'text' ? response.content[0].text : ''
+        const text = response.choices[0]?.message?.content ?? ''
         const parsed = parseEcritureIA(text)
 
         if (!parsed) {
@@ -140,8 +143,7 @@ export const iaRouter = createTRPCRouter({
       }
 
       try {
-        const mediaType = input.mimeType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
-        const response = await anthropic.messages.create({
+        const response = await openrouter.chat.completions.create({
           model: AI_MODEL,
           max_tokens: AI_MAX_TOKENS,
           messages: [
@@ -149,8 +151,10 @@ export const iaRouter = createTRPCRouter({
               role: 'user',
               content: [
                 {
-                  type: 'image',
-                  source: { type: 'base64', media_type: mediaType, data: input.fileBase64 },
+                  type: 'image_url',
+                  image_url: {
+                    url: `data:${input.mimeType};base64,${input.fileBase64}`,
+                  },
                 },
                 { type: 'text', text: OCR_PROMPT },
               ],
@@ -158,7 +162,7 @@ export const iaRouter = createTRPCRouter({
           ],
         })
 
-        const text = response.content[0]?.type === 'text' ? response.content[0].text : ''
+        const text = response.choices[0]?.message?.content ?? ''
         const parsed = parseOcrResult(text)
 
         if (!parsed) {

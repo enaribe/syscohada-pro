@@ -1,5 +1,5 @@
 import { prisma } from '@/server/db/prisma'
-import { AI_MODEL, anthropic } from '@/server/lib/ai/client'
+import { AI_MODEL, openrouter } from '@/server/lib/ai/client'
 import { SYSTEM_PROMPT } from '@/server/lib/ai/prompts'
 import { calculerBalance } from '@/server/lib/syscohada/balance'
 import { calculerKPIs } from '@/server/lib/syscohada/kpis'
@@ -58,23 +58,23 @@ Tu peux répondre en texte libre (pas uniquement en JSON). Sois précis et utile
       { role: 'user' as const, content: message },
     ]
 
-    const stream = await anthropic.messages.stream({
+    const response = await openrouter.chat.completions.create({
       model: AI_MODEL,
       max_tokens: 2048,
-      system: systemPrompt,
-      messages,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...messages,
+      ],
     })
+
+    const text = response.choices[0]?.message?.content ?? ''
 
     const encoder = new TextEncoder()
     const readable = new ReadableStream({
-      async start(controller) {
-        for await (const event of stream) {
-          if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ text: event.delta.text })}\n\n`),
-            )
-          }
-        }
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ text })}\n\n`),
+        )
         controller.enqueue(encoder.encode('data: [DONE]\n\n'))
         controller.close()
       },
@@ -88,7 +88,9 @@ Tu peux répondre en texte libre (pas uniquement en JSON). Sois précis et utile
       },
     })
   } catch (error) {
-    console.error('Chat error:', error)
-    return new Response('Erreur interne', { status: 500 })
+    console.error('Chat error:', error instanceof Error ? error.message : error)
+    console.error('Chat error stack:', error instanceof Error ? error.stack : '')
+    const message = error instanceof Error ? error.message : 'Erreur interne'
+    return new Response(message, { status: 500 })
   }
 }
